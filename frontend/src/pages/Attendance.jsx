@@ -1,5 +1,6 @@
 import React, { useRef, useState } from "react";
 import axios from "axios";
+import "./Attendance.css";
 
 function Attendance() {
 
@@ -8,96 +9,175 @@ function Attendance() {
 
   const [cameraOn, setCameraOn] = useState(false);
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
   // Start camera
   const startCamera = async () => {
+    try {
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true
-    });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user" } // ensures front camera on mobile
+      });
 
-    videoRef.current.srcObject = stream;
-    setCameraOn(true);
+      videoRef.current.srcObject = stream;
+      setCameraOn(true);
+
+    } catch (error) {
+      console.error(error);
+      setMessage("Camera access denied");
+    }
   };
 
-  // Capture and send image
+  // Capture and send image with GPS
   const markAttendance = async () => {
 
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
+    if (!navigator.geolocation) {
+      setMessage("GPS not supported on this device");
+      return;
+    }
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    setLoading(true);
+    setMessage("Getting location...");
 
-    const context = canvas.getContext("2d");
+    navigator.geolocation.getCurrentPosition(
 
-    context.drawImage(video, 0, 0);
+      async (position) => {
 
-    canvas.toBlob(async (blob) => {
+        const latitude = position.coords.latitude;
+        const longitude = position.coords.longitude;
 
-      const formData = new FormData();
+        console.log("Location:", latitude, longitude);
 
-      formData.append("file", blob, "capture.jpg");
+        const canvas = canvasRef.current;
+        const video = videoRef.current;
 
-      // Test coordinates (use your classroom coords)
-      formData.append("latitude", 30.7333);
-      formData.append("longitude", 76.7794);
+        if (!video.videoWidth) {
+          setMessage("Camera not ready");
+          setLoading(false);
+          return;
+        }
 
-      try {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
 
-        const response = await axios.post(
-          "http://127.0.0.1:8000/mark-attendance",
-          formData
-        );
+        const context = canvas.getContext("2d");
+        context.drawImage(video, 0, 0);
 
-        setMessage(JSON.stringify(response.data));
+        canvas.toBlob(async (blob) => {
 
-      } catch (error) {
+          if (!blob) {
+            setMessage("Image capture failed");
+            setLoading(false);
+            return;
+          }
 
-        setMessage("Error marking attendance");
+          const formData = new FormData();
 
+          const student = JSON.parse(localStorage.getItem("student"));
+
+          formData.append("student_id", student.student_id);
+          formData.append("file", blob, "capture.jpg");
+          formData.append("latitude", latitude);
+          formData.append("longitude", longitude);
+
+          try {
+
+            setMessage("Processing attendance...");
+
+            const response = await axios.post(
+              "http://127.0.0.1:8000/mark-attendance",
+              formData,
+              {
+                headers: {
+                  "Content-Type": "multipart/form-data"
+                }
+              }
+            );
+
+            setMessage(JSON.stringify(response.data, null, 2));
+
+          } catch (error) {
+
+            console.error(error);
+
+            if (error.response) {
+              setMessage(JSON.stringify(error.response.data, null, 2));
+            } else {
+              setMessage("Server connection failed");
+            }
+
+          } finally {
+            setLoading(false);
+          }
+
+        }, "image/jpeg");
+
+      },
+
+      (error) => {
+        console.error(error);
+        setMessage("Location permission denied");
+        setLoading(false);
+      },
+
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
       }
 
-    }, "image/jpeg");
+    );
 
   };
 
+
   return (
-    <div style={{ textAlign: "center" }}>
+  <div className="container">
 
-      <h1>Attendance System</h1>
+    <h2 className="title">
+      Face Recognition Attendance
+    </h2>
 
-      {!cameraOn &&
-        <button onClick={startCamera}>
-          Start Camera
-        </button>
-      }
+    {!cameraOn &&
+      <button className="button" onClick={startCamera}>
+        Start Camera
+      </button>
+    }
 
-      <br /><br />
+    <br />
 
-      <video
-        ref={videoRef}
-        autoPlay
-        width="400"
-      />
+    <video
+      ref={videoRef}
+      autoPlay
+      playsInline
+      width="320"
+      height="240"
+      className="video"
+    />
 
-      <canvas
-        ref={canvasRef}
-        style={{ display: "none" }}
-      />
+    <canvas
+      ref={canvasRef}
+      style={{ display: "none" }}
+    />
 
-      <br /><br />
+    <br />
 
-      {cameraOn &&
-        <button onClick={markAttendance}>
-          Mark Attendance
-        </button>
-      }
+    {cameraOn &&
+      <button
+        className="button"
+        onClick={markAttendance}
+        disabled={loading}
+      >
+        {loading ? "Processing..." : "Mark Attendance"}
+      </button>
+    }
 
-      <p>{message}</p>
-
+    <div className="message">
+      {message}
     </div>
-  );
+
+  </div>
+);
 }
 
 export default Attendance;
